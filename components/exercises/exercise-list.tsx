@@ -1,21 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Dumbbell, Loader2 } from "lucide-react";
+import { Dumbbell } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/shadcn-ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/shadcn-ui/dialog";
-import { ExerciseCard } from "./exercise-card";
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { SortableExerciseCard } from "./sortable-exercise-card";
 import { ExerciseDialog } from "./exercise-dialog";
 import type { Exercise } from "@/lib/api/routines";
-import { useDeleteExercise } from "@/hooks/use-exercises";
+import { useReorderExercises } from "@/hooks/use-exercises";
 
 interface ExerciseListProps {
   exercises: Exercise[];
@@ -24,28 +31,45 @@ interface ExerciseListProps {
 
 export function ExerciseList({ exercises, routineId }: ExerciseListProps) {
   const [editingExercise, setEditingExercise] = useState<Exercise | null>(null);
-  const [exerciseToDelete, setExerciseToDelete] = useState<Exercise | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const deleteExercise = useDeleteExercise();
+  const [localExercises, setLocalExercises] = useState<Exercise[]>(exercises);
+  const reorderExercises = useReorderExercises();
 
-  const handleDelete = async () => {
-    if (!exerciseToDelete) return;
+  // Keep local state in sync with props
+  useEffect(() => {
+    setLocalExercises(exercises);
+  }, [exercises]);
 
-    setIsDeleting(true);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
-    try {
-      await deleteExercise.mutateAsync({
-        id: exerciseToDelete.id,
-        routineId,
-      });
-      toast.success("Exercise deleted");
-      setExerciseToDelete(null);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete exercise"
-      );
-    } finally {
-      setIsDeleting(false);
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      const oldIndex = localExercises.findIndex((e) => e.id === active.id);
+      const newIndex = localExercises.findIndex((e) => e.id === over.id);
+
+      const newOrder = arrayMove(localExercises, oldIndex, newIndex);
+      setLocalExercises(newOrder);
+
+      try {
+        await reorderExercises.mutateAsync({
+          routineId,
+          exerciseIds: newOrder.map((e) => e.id),
+        });
+      } catch (error) {
+        // Revert on error
+        setLocalExercises(exercises);
+        toast.error("Failed to reorder exercises");
+      }
     }
   };
 
@@ -74,19 +98,29 @@ export function ExerciseList({ exercises, routineId }: ExerciseListProps) {
 
   return (
     <>
-      <div className="flex flex-col gap-3">
-        <AnimatePresence>
-          {exercises.map((exercise, index) => (
-            <ExerciseCard
-              key={exercise.id}
-              exercise={exercise}
-              index={index}
-              onEdit={() => setEditingExercise(exercise)}
-              onDelete={() => setExerciseToDelete(exercise)}
-            />
-          ))}
-        </AnimatePresence>
-      </div>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext
+          items={localExercises.map((e) => e.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <div className="flex flex-col gap-3">
+            <AnimatePresence>
+              {localExercises.map((exercise, index) => (
+                <SortableExerciseCard
+                  key={exercise.id}
+                  exercise={exercise}
+                  index={index}
+                  onEdit={() => setEditingExercise(exercise)}
+                />
+              ))}
+            </AnimatePresence>
+          </div>
+        </SortableContext>
+      </DndContext>
 
       {editingExercise && (
         <ExerciseDialog
@@ -96,46 +130,6 @@ export function ExerciseList({ exercises, routineId }: ExerciseListProps) {
           onOpenChange={(open) => !open && setEditingExercise(null)}
         />
       )}
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog
-        open={!!exerciseToDelete}
-        onOpenChange={(open) => !open && setExerciseToDelete(null)}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Delete Exercise</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete &quot;{exerciseToDelete?.name}&quot;?
-              <br />
-              This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end gap-2 pt-4">
-            <Button
-              variant="outline"
-              onClick={() => setExerciseToDelete(null)}
-              disabled={isDeleting}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={isDeleting}
-            >
-              {isDeleting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }

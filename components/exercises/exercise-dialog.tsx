@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/shadcn-ui/button";
 import { Input } from "@/components/shadcn-ui/input";
@@ -15,7 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/shadcn-ui/dialog";
-import { useCreateExercise, useUpdateExercise } from "@/hooks/use-exercises";
+import { useCreateExercise, useUpdateExercise, useDeleteExercise } from "@/hooks/use-exercises";
 import type { Exercise } from "@/lib/api/routines";
 
 interface ExerciseDialogProps {
@@ -41,11 +41,13 @@ function ExerciseForm({
   const [series, setSeries] = useState(String(exercise?.series ?? 3));
   const [reps, setReps] = useState(String(exercise?.reps ?? 8));
   const [restTime, setRestTime] = useState(String(exercise?.restTime ?? 90));
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const createExercise = useCreateExercise();
   const updateExercise = useUpdateExercise();
+  const deleteExercise = useDeleteExercise();
   const isEditing = !!exercise;
-  const isPending = createExercise.isPending || updateExercise.isPending;
+  const isPending = createExercise.isPending || updateExercise.isPending || deleteExercise.isPending;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,6 +90,58 @@ function ExerciseForm({
       );
     }
   };
+
+  const handleDelete = async () => {
+    if (!exercise) return;
+
+    try {
+      await deleteExercise.mutateAsync({
+        id: exercise.id,
+        routineId,
+      });
+      toast.success("Exercise deleted");
+      onClose();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete exercise"
+      );
+    }
+  };
+
+  if (showDeleteConfirm) {
+    return (
+      <div className="mt-4 flex flex-col gap-4">
+        <p className="text-sm text-muted-foreground">
+          Are you sure you want to delete &quot;{exercise?.name}&quot;?
+          <br />
+          This action cannot be undone.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowDeleteConfirm(false)}
+            disabled={deleteExercise.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={deleteExercise.isPending}
+          >
+            {deleteExercise.isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Deleting...
+              </>
+            ) : (
+              "Delete Exercise"
+            )}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4">
@@ -167,31 +221,43 @@ function ExerciseForm({
         </div>
       </div>
 
-      <div className="mt-2 flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={onClose}
-          disabled={isPending}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          className="bg-secondary text-secondary-foreground hover:bg-secondary/90"
-          disabled={isPending}
-        >
-          {isPending ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              {isEditing ? "Saving..." : "Adding..."}
-            </>
-          ) : isEditing ? (
-            "Save Changes"
-          ) : (
-            "Add Exercise"
-          )}
-        </Button>
+      <div className={`mt-2 flex ${isEditing ? "justify-between" : "justify-end"}`}>
+        {isEditing && (
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => setShowDeleteConfirm(true)}
+            disabled={isPending}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onClose}
+            disabled={isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            className="bg-secondary text-secondary-foreground hover:bg-secondary/90"
+            disabled={isPending}
+          >
+            {isPending ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {isEditing ? "Saving..." : "Adding..."}
+              </>
+            ) : isEditing ? (
+              "Save Changes"
+            ) : (
+              "Add Exercise"
+            )}
+          </Button>
+        </div>
       </div>
     </form>
   );
@@ -239,7 +305,7 @@ export function ExerciseDialog({
                 </DialogTitle>
                 <DialogDescription>
                   {isEditing
-                    ? "Update the exercise details"
+                    ? "Update the exercise details or delete it"
                     : "Add a new exercise to your routine"}
                 </DialogDescription>
               </DialogHeader>
